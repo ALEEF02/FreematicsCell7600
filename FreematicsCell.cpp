@@ -11,6 +11,8 @@
 #include "driver/uart.h"
 #include "soc/uart_struct.h"
 
+// V. 1.5.5.0
+
 int dumpLine(char* buffer, int len)
 {
 	int bytesToDump = len >> 1;
@@ -644,7 +646,6 @@ String ClientSIM5360::getAvailableOperators()
       }*/
 	  
 	  char *p = strstr(m_buffer, "+COPS: ");
-	  Serial.println(p);
       if (p) {
           p += 7;
           return p;
@@ -752,6 +753,7 @@ GPS_DATA ClientSIM5360::getGPS()
   char *p;
   GPS_DATA rt_gps;
   if (sendCommand("AT+CGPSINFO\r", 3000) && (p = strstr(m_buffer, "+CGPSINFO:"))) do {
+	Serial.println(p);
 	while (rt_gps.time == 0) {
 		if (!(p = strchr(p, ':'))) break;
 		if (*(++p) == ',') break;
@@ -779,10 +781,12 @@ GPS_DATA ClientSIM5360::getGPS()
 		p = strstr(m_buffer, "+CGNSSINFO:");
 		p = strchr(p, ':');
 		uint8_t totalSat = 0;
-		/*for (int i = 0; i < 3; i++) {
+		/*
+		for (int i = 0; i < 3; i++) {
 			p = strchr(p, ',');
 			totalSat += atoi(++p);
-		}*/	
+		}
+		*/
 		if (!(p = strchr(p, ','))) break;
 		rt_gps.gps_sat = atoi(++p);
 		if (!(p = strchr(p, ','))) break;
@@ -797,7 +801,7 @@ GPS_DATA ClientSIM5360::getGPS()
 
 		for (int i = 0; i < 10; i++) {
 			++p;
-			if (!(p = strchr(p, ','))) break;
+			p = strchr(p, ',');
 		}
 		if (!strstr(p, ",,")) {
 			rt_gps.pe = atof(++p);
@@ -807,8 +811,45 @@ GPS_DATA ClientSIM5360::getGPS()
 			rt_gps.ve = atof(++p);
 		}
 	}
+  } while (0);
+  return rt_gps;
+}
+
+GPS_DATA ClientSIM5360::getGSM()
+{
+  // check and parse GPS data
+  char *p;
+  GPS_DATA rt_gps;
+  if (sendCommand("AT+CGACT=1\r", 3000, "OK") && Serial.println(m_buffer) > 0 && sendCommand("AT+CLBS=4\r", 3000) && (p = strstr(m_buffer, "+CLBS:"))) do {
+    if (!(p = strchr(p, ':'))) break;
+    if (*(++p) == ',') break;
+    rt_gps.stat = atoi(p + 2);
+    if (!(p = strchr(p, ','))) break;
+    rt_gps.lat = atof(++p);
+    if (!(p = strchr(p, ','))) break;
+    rt_gps.lng = atof(++p);
+    if (!(p = strchr(p, ','))) break;
+	rt_gps.pe = atof(++p);
+    if (!(p = strchr(p, ','))) break;  // format date ddmmyy
+    rt_gps.date = atoi(++p) - 2000; // year
+    if (!(p = strchr(p, '/'))) break;
+    rt_gps.date += atoi(++p) * 100; // month
+    if (!(p = strchr(p, '/'))) break;
+    rt_gps.date += atoi(++p) * 10000; // day
+    if (!(p = strchr(p, ','))) break;  // format time hhmmss
+    rt_gps.time = atof(++p) * 10000; // hour
+    if (!(p = strchr(p, ':'))) break;
+    rt_gps.time += atof(++p) * 100; // min
+    if (!(p = strchr(p, ':'))) break;
+    rt_gps.time += atof(++p); // sec
+    rt_gps.ts = millis();
+	sendCommand("AT+CNETSTOP\r", 3000);
+	
 	return rt_gps;
   } while (0);
+  
+  Serial.println("END");
+  Serial.println(m_buffer);
 }
 
 bool UDPClientSIM5360::open(const char* host, uint16_t port)
@@ -986,45 +1027,107 @@ String ClientSIM7600::checkErr() {
 	return (p + 6);
 }
 
+bool ClientSIM7600::checkConnection() {
+	String ip = getIP();
+	if (ip && ip != "") {
+	} else {
+		Serial.println(F("No IP..."));
+		return false;
+	}
+	
+	if (sendCommand("AT+CREG?\r", 1000, "+CREG: 0,")) {
+		char *p = strstr(m_buffer, "+CREG: 0,");
+		return (p && (*(p + 9) == '1' || *(p + 9) == '5'));
+	} else {
+		int netSignal = getSignal();
+		if (netSignal > -113 && netSignal != 85) {
+			return true;
+		} else if (netSignal == -113) {
+			Serial.println(F("No signal... (-113dBm)"));
+			return false;
+		} else if (netSignal == 85){
+			Serial.println(F("Unable to get signal... (85dBm)"));
+			return false;
+		} else {
+			Serial.println("Irregular signal... " + ((netSignal + 113) / 2));
+			return false;
+		}
+	}
+	
+	return false;
+}
+
+bool ClientSIM7600::checkConnection(int signal) {
+	String ip = getIP();
+	if (ip && ip != "") {
+	} else {
+		Serial.println(F("No IP..."));
+		return false;
+	}
+
+	if (sendCommand("AT+CREG?\r", 1000, "+CREG: 0,")) {
+		char *p = strstr(m_buffer, "+CREG: 0,");
+		return (p && (*(p + 9) == '1' || *(p + 9) == '5'));
+	} else {
+		if (signal > -113 && signal != 85) {
+			return true;
+		} else if (signal == -113) {
+			Serial.println(F("No signal... (-113dBm)"));
+			return false;
+		} else if (signal == 85) {
+			Serial.println(F("Unable to get signal... (85dBm)"));
+			return false;
+		} else {
+			Serial.println("Irregular signal... " + ((signal + 113) / 2));
+			return false;
+		}
+	}
+	return false;
+}
+
+/* 
+Return Stage meanings
+-2 : Invalid System Mode
+-1 : Error setting automatic network registration
+ 1 : System not set to fully operational (Use AT+CFUN=1)
+ 2 : No Service (Might happen a few times in a row on a cold start. If persistent, check antenna)
+ 3 : Not registered to the ME Network (Most likely an issue with AT+COPS)
+ 4 : Not registered to the EPS Network (Most likely an issue with AT+COPS)
+ 5 : Successfully setup the unit
+*/
 int ClientSIM7600::setup(const char* apn, unsigned int timeout, int mode)
 {
-  /* 
-	Stage meanings
-	-2 : Invalid System Mode
-	-1 : Error setting automatic network registration
-	 1 : System not set to fully operational (Use AT+CFUN=1)
-	 2 : No Service (Might happen a few times in a row on a cold start. If persistent, check antenna)
-	 3 : Not registered to the ME Network (Most likely an issue with AT+COPS)
-	 4 : Not registered to the EPS Network (Most likely an issue with AT+COPS)
-	 5 : Successfully setup the unit
-  */
   
   uint32_t t = millis();
   bool success = false;
   int stage = 0;
+  
   /*
-	  
-	//sendCommand("AT+CNMP=2\r");  // Automatic
-	//sendCommand("AT+CNMP=9\r");  // CDMA (2G) only
-	//sendCommand("AT+CNMP=13\r"); // GSM (2G) only
-	//sendCommand("AT+CNMP=14\r"); // WCDMA (3G) only
-	//sendCommand("AT+CNMP=19\r"); // GSM (2G) and WCDMA (3G)
-	//sendCommand("AT+CNMP=38\r"); // LTE (4G) only
-	//sendCommand("AT+CNMP=39\r"); // GSM (2G), WCDMA (3G), and LTE (4G)
-	//sendCommand("AT+CNMP=48\r"); // Anything BUT LTE (4G)
-	//sendCommand("AT+CNMP=54\r"); // WCDMA (3G) and LTE (4G)
-
+	sendCommand("AT+CNMP=2\r"); // Automatic
+	sendCommand("AT+CNMP=9\r"); // CDMA (2G) only
+	sendCommand("AT+CNMP=13\r"); // GSM (2G) only
+	sendCommand("AT+CNMP=14\r"); // WCDMA (3G) only
+	sendCommand("AT+CNMP=19\r"); // GSM (2G) and WCDMA (3G)
+	sendCommand("AT+CNMP=38\r"); // LTE (4G) only
+	sendCommand("AT+CNMP=39\r"); // GSM (2G), WCDMA (3G), and LTE (4G)
+	sendCommand("AT+CNMP=48\r"); // Anything BUT LTE (4G)
+	sendCommand("AT+CNMP=54\r"); // WCDMA (3G) and LTE (4G)
+	
 	AT&T Mobility : WCDMA
 	
   */
   
   sprintf(m_buffer, "AT+CNMP=%i\r", mode);
   if (!sendCommand(m_buffer, 2000, "OK")) {
+	Serial.println("\n-------------- BUFFER --------------");
 	Serial.println(m_buffer);
-	return -2;
+	Serial.println("------------ END BUFFER ------------");
   }
   
   if (!sendCommand("AT+COPS=0\r", 2000, "OK")) {
+	Serial.println("\n-------------- BUFFER -------------");
+	Serial.println(m_buffer);
+	Serial.println("------------ END BUFFER -----------");
 	return -1;
   }
   
@@ -1054,7 +1157,12 @@ int ClientSIM7600::setup(const char* apn, unsigned int timeout, int mode)
         success = false;
       }
     } while (millis() - t < timeout);
-    if (!success) break;
+    if (!success) {
+		Serial.println("\n-------------- BUFFER --------------");
+		Serial.println(m_buffer);
+		Serial.println("------------ END BUFFER ------------");
+		break;
+	}
 
     success = false;
     do {

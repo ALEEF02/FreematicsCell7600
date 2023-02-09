@@ -43,18 +43,19 @@ typedef struct {
 	uint32_t time = 0;
 	float lat;
 	float lng;
-	float alt; /* meter */
-	float speed; /* knot */
-	uint16_t heading; /* degree */
+	float alt = -1; /* meter */
+	float speed = -1; /* knot */
+	uint16_t heading = -1; /* degree */
 	uint8_t gps_sat;
 	uint8_t glonass_sat;
 	uint8_t beidou_sat;
-	uint8_t sat;
+	uint8_t sat = -1;
 	float pe = -1;
 	float he = -1;
 	float ve = -1;
 	uint16_t sentences;
 	uint16_t errors;
+	uint8_t stat = -1; // used for GSM status
 } GPS_DATA;
 
 class FreematicsBee
@@ -154,6 +155,7 @@ public:
         }
     }
 	GPS_DATA getGPS();
+	GPS_DATA getGSM();
     char* getBuffer() { return m_buffer; }
     const char* deviceName() { return m_model; }
     char IMEI[16] = {0};
@@ -193,8 +195,10 @@ public:
 class ClientSIM7600 : public ClientSIM5360
 {
 public:
-    int setup(const char* apn, unsigned int timeout = 30000, int mode = 2);
+    int setup(const char* apn, unsigned int timeout = 180000, int mode = 2);
 	String checkErr();
+	bool checkConnection();
+	bool checkConnection(int signal);
     void end();
     bool setGPS(bool on);
 };

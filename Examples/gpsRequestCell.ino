@@ -16,6 +16,8 @@
 #define CELL_APN "hologram"
 #define CONN_TIMEOUT 210000
 
+#define CODE_VERSION "1.5.5.0"
+
 typedef struct {
   String out = "";
   String topic = "";
@@ -29,15 +31,25 @@ int connMode = 2;
 int initRetries = 0;
 CEL_MSG backedUp[50] = {};
 
+bool operator== (const CEL_MSG& prev, const CEL_MSG& next) {
+  if (prev.out == next.out && prev.topic == next.topic) {
+    return true;
+  }
+  return false;
+}
+
+void(* hardReset) (void) = 0;
+
 bool init_net()
 {
     Serial.println("----------------------");
-    Serial.print("Init cellular module...");
+    Serial.print("Init cellular module... ");
     if (net.begin()) {
       Serial.print(net.deviceName());
       Serial.println(" OK");
     } else {
       Serial.println("NO");
+      hardReset();
       return false;
     }
     Serial.print("IMEI:");
@@ -132,7 +144,7 @@ bool init_net()
         Serial.println(" OK");
         break;
       } else {
-        Serial.println(" failed starting");
+        Serial.println(" failed starting, try #" + String(i));
         char* checkServer = net.checkServer();
         Serial.println(checkServer);
         if (checkServer != 0) {
@@ -228,6 +240,7 @@ bool reconnect_net() {
       }
     }
   }
+  return true;
 }
 
 void light(bool state) {
@@ -245,33 +258,67 @@ GPS_DATA getPos() {
   return gpsdata;
 }
 
-String formattedGPS(bool reply = false) {
+GPS_DATA getPosGSM() {
+  GPS_DATA gpsdata;
+  gpsdata = net.getGSM();
+  return gpsdata;
+}
+
+String formattedGPS(bool reply = false, bool gsm = false) {
   String out;
   TimeElements curTime;
   time_t epoch;
-  GPS_DATA gpsdata = getPos();
-  if (gpsdata.sat > 0) {
-    curTime.Day = (int)(gpsdata.date / 10000);
-    curTime.Month = (int)((gpsdata.date - (curTime.Day * 10000)) / 100);
-    curTime.Year = ((gpsdata.date % 100) + 30);
-    curTime.Hour = (int)(gpsdata.time / 1000000);
-    curTime.Minute = (int)((gpsdata.time - (curTime.Hour * 1000000)) / 10000);
-    curTime.Second = (gpsdata.time / 100) % 100;
-    epoch = makeTime(curTime);
-    if (!reply) { // Triple escape our inbound messages so that our messages send to the server with an extra "\", so that when the data of the payload is parsed by Hologram, it uses the last escape to leave a JSON payload. Not necessary on replies, since we're just sending the data by itself w/o key info.
-      out = "{\\\"T\\\":\\\"" + String(epoch) + "\\\",\\\"Lat\\\":\\\"" + String(gpsdata.lat, 6) + "\\\",\\\"Lon\\\":\\\"" + String(gpsdata.lng, 6) + "\\\",\\\"Spd\\\":\\\"" + String(gpsdata.speed, 1) + "\\\",\\\"A\\\":\\\"" + String(gpsdata.alt) + "\\\",\\\"H\\\":\\\"" + String(gpsdata.heading) + "\\\",\\\"Sat\\\":\\\"" + String(gpsdata.sat) + "\\\",\\\"PE\\\":\\\"" + String(gpsdata.pe, 1) + "\\\",\\\"HE\\\":\\\"" + String(gpsdata.he, 1) + "\\\",\\\"VE\\\":\\\"" + String(gpsdata.ve, 1) + "\\\"}";
+  if (!gsm) {
+    GPS_DATA gpsdata = getPos();
+    if (gpsdata.sat > 0) {
+      curTime.Day = (int)(gpsdata.date / 10000);
+      curTime.Month = (int)((gpsdata.date - (curTime.Day * 10000)) / 100);
+      curTime.Year = ((gpsdata.date % 100) + 30);
+      curTime.Hour = (int)(gpsdata.time / 1000000);
+      curTime.Minute = (int)((gpsdata.time - (curTime.Hour * 1000000)) / 10000);
+      curTime.Second = (gpsdata.time / 100) % 100;
+      epoch = makeTime(curTime);
+      if (!reply) {
+        out = "{\\\"T\\\":\\\"" + String(epoch) + "\\\",\\\"Lat\\\":\\\"" + String(gpsdata.lat, 6) + "\\\",\\\"Lon\\\":\\\"" + String(gpsdata.lng, 6) + "\\\",\\\"Spd\\\":\\\"" + String(gpsdata.speed, 1) + "\\\",\\\"A\\\":\\\"" + String(gpsdata.alt) + "\\\",\\\"H\\\":\\\"" + String(gpsdata.heading) + "\\\",\\\"Sat\\\":\\\"" + String(gpsdata.sat) + "\\\",\\\"PE\\\":\\\"" + String(gpsdata.pe, 1) + "\\\",\\\"HE\\\":\\\"" + String(gpsdata.he, 1) + "\\\",\\\"VE\\\":\\\"" + String(gpsdata.ve, 1) + "\\\"}";
+      } else {
+        out = "{\"T\":\"" + String(epoch) + "\",\"Lat\":\"" + String(gpsdata.lat, 6) + "\",\"Lon\":\"" + String(gpsdata.lng, 6) + "\",\"Spd\":\"" + String(gpsdata.speed, 1) + "\",\"A\":\"" + String(gpsdata.alt) + "\",\"H\":\"" + String(gpsdata.heading) + "\",\"Sat\":\"" + String(gpsdata.sat) + "\",\"PE\":\"" + String(gpsdata.pe, 1) + "\",\"HE\":\"" + String(gpsdata.he, 1) + "\",\"VE\":\"" + String(gpsdata.ve, 1) + "\"}";
+      }
+      Serial.println(out);
     } else {
-      out = "{\"T\":\"" + String(epoch) + "\",\"Lat\":\"" + String(gpsdata.lat, 6) + "\",\"Lon\":\"" + String(gpsdata.lng, 6) + "\",\"Spd\":\"" + String(gpsdata.speed, 1) + "\",\"A\":\"" + String(gpsdata.alt) + "\",\"H\":\"" + String(gpsdata.heading) + "\",\"Sat\":\"" + String(gpsdata.sat) + "\",\"PE\":\"" + String(gpsdata.pe, 1) + "\",\"HE\":\"" + String(gpsdata.he, 1) + "\",\"VE\":\"" + String(gpsdata.ve, 1) + "\"}";
+      if (!reply) {
+        out = "{\\\"Error\\\":\\\"No GPS Signal\\\"}";
+      } else {
+        out = "{\"Error\":\"No GPS Signal\"}";
+      }
+      Serial.println(F("No response... trying GSM"));
+      out = formattedGPS(reply, true);
     }
-    Serial.println(out);
   } else {
-    if (!reply) {
-      out = "{\\\"Error\\\":\\\"No GPS Signal\\\"}";
+    GPS_DATA gpsdata = getPosGSM();
+    if (gpsdata.stat == 0) {
+      curTime.Day = (int)(gpsdata.date / 10000);
+      curTime.Month = (int)((gpsdata.date - (curTime.Day * 10000)) / 100);
+      curTime.Year = ((gpsdata.date % 100) + 30);
+      curTime.Hour = (int)(gpsdata.time / 1000000);
+      curTime.Minute = (int)((gpsdata.time - (curTime.Hour * 1000000)) / 10000);
+      curTime.Second = (gpsdata.time / 100) % 100;
+      epoch = makeTime(curTime);
+      if (!reply) {
+        out = "{\\\"T\\\":\\\"" + String(epoch) + "\\\",\\\"Lat\\\":\\\"" + String(gpsdata.lat, 6) + "\\\",\\\"Lon\\\":\\\"" + String(gpsdata.lng, 6) + "\\\",\\\"Spd\\\":\\\"" + String(gpsdata.speed, 1) + "\\\",\\\"A\\\":\\\"" + String(gpsdata.alt) + "\\\",\\\"H\\\":\\\"" + String(gpsdata.heading) + "\\\",\\\"Sat\\\":\\\"" + String(gpsdata.sat) + "\\\",\\\"PE\\\":\\\"" + String(gpsdata.pe, 1) + "\\\",\\\"HE\\\":\\\"" + String(gpsdata.he, 1) + "\\\",\\\"VE\\\":\\\"" + String(gpsdata.ve, 1) + "\\\"}";
+      } else {
+        out = "{\"T\":\"" + String(epoch) + "\",\"Lat\":\"" + String(gpsdata.lat, 6) + "\",\"Lon\":\"" + String(gpsdata.lng, 6) + "\",\"Spd\":\"" + String(gpsdata.speed, 1) + "\",\"A\":\"" + String(gpsdata.alt) + "\",\"H\":\"" + String(gpsdata.heading) + "\",\"Sat\":\"" + String(gpsdata.sat) + "\",\"PE\":\"" + String(gpsdata.pe, 1) + "\",\"HE\":\"" + String(gpsdata.he, 1) + "\",\"VE\":\"" + String(gpsdata.ve, 1) + "\"}";
+      }
+      Serial.println(out);
     } else {
-      out = "{\"Error\":\"No GPS Signal\"}";
+      if (!reply) {
+        out = "{\\\"Error\\\":\\\"No GPS Signal\\\"}";
+      } else {
+        out = "{\"Error\":\"No GPS Signal\"}";
+      }
+      Serial.println(("GSM error, stat ") + gpsdata.stat);
     }
-    Serial.println(F("No response..."));
   }
+  
   return out;
 }
 
@@ -331,6 +378,7 @@ bool sendNew(String out, String topic) {
   
     char* checkTCP = net.checkTCP();
     Serial.println(checkTCP);
+    return false;
   } else {
     Serial.println("OK");
     
@@ -383,6 +431,7 @@ void setup()
   light(false);
   
   Serial.begin(115200);
+  Serial.println("Code version " + String(CODE_VERSION));
 
   // start serial communication with cellular module
   net.xbBegin(115200, PIN_BEE_UART_RXD, PIN_BEE_UART_TXD);
